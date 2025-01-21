@@ -5,6 +5,8 @@ use tokio::time::sleep;
 
 use crate::error::{AjaxClientError, WikidotRespondError};
 
+const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36";
+
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct AjaxConfig{
     pub attempt_limit: i8,
@@ -52,7 +54,7 @@ impl AjaxClient{
             ("event", "login")
         ];
         let mut headers = HeaderMap::new();
-        headers.insert("user-agent", HeaderValue::from_str("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36")?);
+        headers.insert("user-agent", HeaderValue::from_str(UA)?);
         let client = ClientBuilder::new()
             .redirect(Policy::none())
             .default_headers(headers)
@@ -98,7 +100,7 @@ impl AjaxClient{
 
     pub async fn client(&self) -> Result<reqwest::Client, AjaxClientError>{
         let mut headers = HeaderMap::new();
-        headers.insert("user-agent", HeaderValue::from_str("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36")?);
+        headers.insert("user-agent", HeaderValue::from_str(UA)?);
         if let Some(cookies) = &self.cookies {
             headers.insert("cookie", HeaderValue::from_str(&cookies)?);
         }
