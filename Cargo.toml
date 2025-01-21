@@ -1,0 +1,16 @@
+[package]
+name = "wikidot"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json", "cookies"] }
+tokio = { version = "1", features = ["full"] }
+regex = "1.10"
+serde = {version = "1.0", features = ["derive"]}
+scraper = "0.20"
+futures = "0.3"
+mongodb = {version = "3.0", features = ["sync"]}
+serde_json = "1.0"
+lazy_static = "1.5"
+dotenv = "0.15"
