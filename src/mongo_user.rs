@@ -33,7 +33,7 @@ pub async fn update_user(collection: Arc<mongodb::Collection<MongoUser>>, user_i
     let user = AjaxClient::new().user(user_id).await?;
     println!("{:?}", user.title);
     let mut user_history = collection.find_one(doc! {"id": user_id}).await?.unwrap();
-    if user_history.title.last().unwrap() != &user.title{
+    if user_history.title.last().unwrap() != &user.title || !user.title.is_empty(){
         user_history.title.push(user.title);
     }
 
@@ -41,7 +41,7 @@ pub async fn update_user(collection: Arc<mongodb::Collection<MongoUser>>, user_i
         user_history.avatar.push(MongoAvatar{image: user.avatar, timestamp: DateTime::now()});
     }
 
-    if user_history.karma.last().unwrap().level != user.karma{
+    if user_history.karma.last().unwrap().level < user.karma{
         user_history.karma.push(MongoKarma{level: user.karma, timestamp: DateTime::now()});
     }
 
