@@ -20,8 +20,8 @@ jobs:
       run: cargo build --release
 
     - name: Upload Artifact
-    - uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4
       with:
-          name: my-artifacts
+          name: artifacts
           path: |
             /target/release/wikidot
