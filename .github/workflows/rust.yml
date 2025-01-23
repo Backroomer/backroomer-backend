@@ -24,4 +24,4 @@ jobs:
       with:
           name: artifacts
           path: |
-            /target/release/wikidot
+            ./target/release/wikidot
