@@ -52,6 +52,9 @@ impl Page{
     
     pub async fn acquire_id(&mut self) -> Result<i32, WikidotError>{
         if let Some(id) = self.id {
+            unsafe {
+                if !PAGE_VEC.contains(&id) { PAGE_VEC.push(id) };
+            }
             return Ok(id)
         }
 
@@ -67,7 +70,9 @@ impl Page{
         let id = id_re.captures(&_text).ok_or(IdNotFound::page())?.get(1).ok_or(IdNotFound::page())?.as_str().parse::<i32>()?;
         
         self.id = Some(id);
-        unsafe { PAGE_VEC.push(id) };
+        unsafe {
+            if !PAGE_VEC.contains(&id) { PAGE_VEC.push(id) };
+        }
         Ok(id)
     }
 }
