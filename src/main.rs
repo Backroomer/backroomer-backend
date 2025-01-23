@@ -109,17 +109,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         
         unsafe { println!("{:?}, {:?}, {:?}", PAGE_VEC, USER_NOW, USER_ADD) };
 
+        let mut update_users = Vec::new();
+        for user_bson in user_col.distinct("id", doc! {"account_type": {"$ne" : "deleted"}}).await?{
+            update_users.push(user_bson.as_i32().unwrap());
+        }
+
         let mut tasks = Vec::new();
-        unsafe{
-            for user_id in USER_NOW.clone() {
-                let col_arc_clone = user_col.clone();
-                tasks.push(update_user(col_arc_clone, user_id));
-            }
+        for user_id in update_users.clone() {
+            let col_arc_clone = user_col.clone();
+            tasks.push(update_user(col_arc_clone, user_id));
         }
 
         let results = stream::iter(tasks).buffered(6)
             .collect::<Vec<_>>().await;
-        collect_result!(user_hash, results, unsafe { USER_NOW.clone().into_iter() });
+        collect_result!(user_hash, results, update_users.clone().into_iter());
 
         let mut tasks = Vec::new();
         unsafe{
