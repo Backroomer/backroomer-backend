@@ -56,24 +56,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     loop {
         let start = DateTime::now();
         println!("start: {:?}", start.timestamp_millis());
-        unsafe {
-            USER_ADD = Vec::new();
-            USER_NOW = Vec::new();
-            PAGE_VEC = Vec::new();
-        }
+
+        USER_ADD.lock()?.clear();
+        USER_NOW.lock()?.clear();
+        PAGE_VEC.lock()?.clear();
+
         for user_bson in user_col.distinct("id", doc! {}).await?{
-            unsafe {USER_NOW.push(user_bson.as_i32().unwrap());}
+            USER_NOW.lock()?.push(user_bson.as_i32().unwrap());
         }
         let client = AjaxClient::from(&dotenv::var("WD_USERNAME").unwrap(),
             &dotenv::var("WD_PASSWORD").unwrap()).await?;
         let site = client.get_site("backrooms-wiki-cn").await?;
 
         let pages = site.search(&[("category", "*")]).await?;
-        let mut page_iter = pages.clone().into_iter();
+        let mut page_iter = pages.into_iter();
 
         let mut tasks = Vec::new();
         
-        for page in pages{
+        for page in page_iter.by_ref() {
             let col_arc_clone = page_col.clone();
             tasks.push(update_page(col_arc_clone, page));
         }
@@ -91,7 +91,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             }
         }
 
-        let _ = page_col.update_many(doc! { "id": { "$nin": unsafe { PAGE_VEC.clone() } } }, doc! { "$set": {"status": false}}).await?;
+        let _ = page_col.update_many(doc! { "id": { "$nin": PAGE_VEC.lock()?.clone() } }, doc! { "$set": {"status": false}}).await?;
         
         let response = client.get("https://backrooms-wiki-cn.wikidot.com/attribution-metadata").await?.text().await?;
         let html = Html::parse_document(&response);
@@ -107,7 +107,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         let _ = stream::iter(tasks).buffered(6)
             .collect::<Vec<_>>().await;
         
-        unsafe { println!("{:?}, {:?}, {:?}", PAGE_VEC, USER_NOW, USER_ADD) };
+        println!("{:?}, {:?}, {:?}", 
+            PAGE_VEC.lock()?, 
+            USER_NOW.lock()?, 
+            USER_ADD.lock()?
+        );
 
         let mut update_users = Vec::new();
         for user_bson in user_col.distinct("id", doc! {"account_type": {"$ne" : "deleted"}}).await?{
@@ -115,26 +119,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         }
 
         let mut tasks = Vec::new();
-        for user_id in update_users.clone() {
+        for user_id in update_users.iter() {
             let col_arc_clone = user_col.clone();
-            tasks.push(update_user(col_arc_clone, user_id));
+            tasks.push(update_user(col_arc_clone, *user_id));
         }
 
         let results = stream::iter(tasks).buffered(6)
             .collect::<Vec<_>>().await;
-        collect_result!(user_hash, results, update_users.clone().into_iter());
+        collect_result!(user_hash, results, update_users.iter().copied());
+
 
         let mut tasks = Vec::new();
-        unsafe{
-            for user_id in USER_ADD.clone() {
-                let col_arc_clone = user_col.clone();
-                tasks.push(add_user(col_arc_clone, user_id));
-            }
+        let add_users = USER_ADD.lock()?.to_vec();
+        for user_id in &add_users {
+            let col_arc_clone = user_col.clone();
+            tasks.push(add_user(col_arc_clone, *user_id));
         }
 
         let results = stream::iter(tasks).buffered(6)
             .collect::<Vec<_>>().await;
-        collect_result!(user_hash, results, unsafe { USER_ADD.clone().into_iter() });
+        collect_result!(user_hash, results, add_users.iter().copied());
 
         println!("failed pages: {:?}", page_hash);
         println!("failed users: {:?}", user_hash);

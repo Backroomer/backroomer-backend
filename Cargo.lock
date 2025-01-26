@@ -2554,6 +2554,7 @@ dependencies = [
  "futures",
  "lazy_static",
  "mongodb",
+ "once_cell",
  "regex",
  "reqwest",
  "scraper",

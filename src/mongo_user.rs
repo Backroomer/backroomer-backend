@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use mongodb::bson::{doc, DateTime};
 use serde::{Deserialize, Serialize};
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
 use crate::{client::AjaxClient, error::WikidotError};
 
-pub static mut USER_NOW: Vec<i32> = Vec::new();
-pub static mut USER_ADD: Vec<i32> = Vec::new();
+pub static USER_ADD: Lazy<Mutex<Vec<i32>>> = Lazy::new(|| Mutex::new(Vec::new()));
+pub static USER_NOW: Lazy<Mutex<Vec<i32>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 #[derive(Deserialize, Serialize)]
 pub struct MongoUser{

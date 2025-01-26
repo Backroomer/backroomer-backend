@@ -4,8 +4,10 @@ use reqwest::StatusCode;
 use scraper::Html;
 use serde::{Deserialize, Serialize};
 use crate::{error::{ParseElementError, IdNotFound, TargetNotExist, WikidotError}, selectors, site::Site, user::User};
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
-pub static mut PAGE_VEC: Vec<i32> = Vec::new();
+pub static PAGE_VEC: Lazy<Mutex<Vec<i32>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct Page{
@@ -52,9 +54,7 @@ impl Page{
     
     pub async fn acquire_id(&mut self) -> Result<i32, WikidotError>{
         if let Some(id) = self.id {
-            unsafe {
-                if !PAGE_VEC.contains(&id) { PAGE_VEC.push(id) };
-            }
+            if !PAGE_VEC.lock().unwrap().contains(&id) { PAGE_VEC.lock().unwrap().push(id) };
             return Ok(id)
         }
 
@@ -70,9 +70,7 @@ impl Page{
         let id = id_re.captures(&_text).ok_or(IdNotFound::page())?.get(1).ok_or(IdNotFound::page())?.as_str().parse::<i32>()?;
         
         self.id = Some(id);
-        unsafe {
-            if !PAGE_VEC.contains(&id) { PAGE_VEC.push(id) };
-        }
+        if !PAGE_VEC.lock().unwrap().contains(&id) { PAGE_VEC.lock().unwrap().push(id) };
         Ok(id)
     }
 }
