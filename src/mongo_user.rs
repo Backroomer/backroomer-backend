@@ -1,4 +1,3 @@
-use std::sync::Arc;
 use mongodb::bson::{doc, DateTime};
 use serde::{Deserialize, Serialize};
 use once_cell::sync::Lazy;
@@ -31,7 +30,7 @@ struct MongoAvatar{
     timestamp: DateTime,
 }
 
-pub async fn update_user(collection: Arc<mongodb::Collection<MongoUser>>, user_id: i32) -> Result<(), WikidotError>{
+pub async fn update_user(collection: mongodb::Collection<MongoUser>, user_id: i32) -> Result<(), WikidotError>{
     let user = AjaxClient::new().user(user_id).await?;
     println!("{:?}", user.title);
     let mut user_history = collection.find_one(doc! {"id": user_id}).await?.unwrap();
@@ -57,7 +56,7 @@ pub async fn update_user(collection: Arc<mongodb::Collection<MongoUser>>, user_i
     Ok(())
 }
 
-pub async fn add_user(collection: Arc<mongodb::Collection<MongoUser>>, user_id: i32) -> Result<(), WikidotError>{
+pub async fn add_user(collection: mongodb::Collection<MongoUser>, user_id: i32) -> Result<(), WikidotError>{
     let user = AjaxClient::new().user(user_id).await?;
     println!("{:?}", user.title);
     let _ = collection.insert_one(MongoUser{

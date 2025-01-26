@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, thread::sleep, time::Duration};
+use std::{collections::HashMap, thread::sleep, time::Duration};
 use futures::{stream, StreamExt};
 use mongodb::bson::{doc, DateTime};
 use scraper::{ElementRef, Html, Selector};
@@ -16,7 +16,11 @@ macro_rules! collect_result {
     };
 }
 
-async fn acquire_metadata(tr: ElementRef<'_>, site: Arc<Site>, page_col: Arc<mongodb::Collection<MongoPage>>) -> Result<(), WikidotError>{
+async fn acquire_metadata(
+    tr: ElementRef<'_>, 
+    site: Site,
+    page_col: mongodb::Collection<MongoPage>
+) -> Result<(), WikidotError> {
     let mut tds = tr.select(&selectors::TD);
     let page_fullname = tds.next().unwrap().text().collect::<String>();
     let user_name = tds.next().unwrap().text().collect::<String>();
@@ -51,8 +55,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mongo = mongodb::Client::with_uri_str(dotenv::var("DB_LINK").unwrap())
         .await?;
     let db = mongo.database("backrooms-cn");
-    let page_col: Arc<mongodb::Collection<MongoPage>> = Arc::new(db.collection("pages"));
-    let user_col: Arc<mongodb::Collection<MongoUser>> = Arc::new(db.collection("users"));
+    let page_col: mongodb::Collection<MongoPage> = db.collection("pages");
+    let user_col: mongodb::Collection<MongoUser> = db.collection("users");
     loop {
         let start = DateTime::now();
         println!("start: {:?}", start.timestamp_millis());
@@ -69,25 +73,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         let site = client.get_site("backrooms-wiki-cn").await?;
 
         let pages = site.search(&[("category", "*")]).await?;
-        let mut page_iter = pages.into_iter();
-
-        let mut tasks = Vec::new();
         
-        for page in page_iter.by_ref() {
-            let col_arc_clone = page_col.clone();
-            tasks.push(update_page(col_arc_clone, page));
-        }
-
-        let results = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
+        let results = stream::iter(
+            pages.iter()
+                .map(|page| update_page(page_col.clone(), page.clone()))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
 
         let mut page_hash: HashMap<_, _> = HashMap::new();
         let mut user_hash: HashMap<_, _> = HashMap::new();
 
-        for result in results{
-            let page = page_iter.next().unwrap();
+        for (i, result) in results.into_iter().enumerate() {
             if result.is_err() {
-                page_hash.insert(page.fullname, result.err().unwrap());
+                page_hash.insert(pages[i].fullname.clone(), result.err().unwrap());
             }
         }
 
@@ -96,16 +96,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         let response = client.get("https://backrooms-wiki-cn.wikidot.com/attribution-metadata").await?.text().await?;
         let html = Html::parse_document(&response);
         let table = html.select(&Selector::parse("table.wiki-content-table").unwrap()).next().unwrap();
-        let site_arc = Arc::new(site);
-        let mut tasks = Vec::new();
-        for tr in table.select(&selectors::TR).skip(1) {
-            let col_arc_clone = page_col.clone();
-            let site_clone = site_arc.clone();
-            tasks.push(acquire_metadata(tr, site_clone, col_arc_clone));
-        }
-
-        let _ = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
+        let _ = stream::iter(
+            table.select(&selectors::TR)
+                .skip(1)
+                .map(|tr| acquire_metadata(tr, site.clone(), page_col.clone()))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
         
         println!("{:?}, {:?}, {:?}", 
             PAGE_VEC.lock()?, 
@@ -113,32 +111,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             USER_ADD.lock()?
         );
 
-        let mut update_users = Vec::new();
-        for user_bson in user_col.distinct("id", doc! {"account_type": {"$ne" : "deleted"}}).await?{
-            update_users.push(user_bson.as_i32().unwrap());
-        }
+        let update_users: Vec<i32> = user_col
+            .distinct("id", doc! {"account_type": {"$ne": "deleted"}}).await?
+            .into_iter()
+            .map(|bson| bson.as_i32().unwrap())
+            .collect();
 
-        let mut tasks = Vec::new();
-        for user_id in update_users.iter() {
-            let col_arc_clone = user_col.clone();
-            tasks.push(update_user(col_arc_clone, *user_id));
-        }
-
-        let results = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
+        let results = stream::iter(
+            update_users.iter()
+                .map(|&user_id| update_user(user_col.clone(), user_id))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
         collect_result!(user_hash, results, update_users.iter().copied());
 
-
-        let mut tasks = Vec::new();
-        let add_users = USER_ADD.lock()?.to_vec();
-        for user_id in &add_users {
-            let col_arc_clone = user_col.clone();
-            tasks.push(add_user(col_arc_clone, *user_id));
-        }
-
-        let results = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
-        collect_result!(user_hash, results, add_users.iter().copied());
+        let results = stream::iter(
+            USER_ADD.lock()?.to_vec()
+                .iter()
+                .map(|user_id| add_user(user_col.clone(), *user_id))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
+        collect_result!(user_hash, results, USER_ADD.lock()?.to_vec().iter().copied());
 
         println!("failed pages: {:?}", page_hash);
         println!("failed users: {:?}", user_hash);

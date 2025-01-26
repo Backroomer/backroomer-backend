@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 use mongodb::bson::{doc, DateTime};
 use serde::{Deserialize, Serialize};
 use crate::{error::WikidotError, page::Page, page_history::Revision};
@@ -50,7 +50,7 @@ fn process_revisions(revisions: Vec<Revision>) -> Vec<MongoRevision>{
     rev
 }
 
-pub async fn update_page(collection: Arc<mongodb::Collection<MongoPage>>, mut page: Page) -> Result<(), WikidotError>{
+pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: Page) -> Result<(), WikidotError>{
     println!("{}", page.fullname);
     let mut new_rates: HashMap<String, i8> = HashMap::new();
     let mongo_page;
