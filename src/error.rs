@@ -2,206 +2,121 @@
 use std::{fmt::Display, num::{ParseFloatError, ParseIntError}};
 use reqwest::header::{InvalidHeaderValue, ToStrError};
 
-#[derive(Debug)]
-pub struct ParseElementError {
-    kind: String,
-    message: String,
+// 定义错误实现宏
+macro_rules! impl_error {
+    ($type:ty) => {
+        impl Display for $type {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "[{}] {}", self.kind, self.message)
+            }
+        }
+        impl std::error::Error for $type {}
+    };
 }
 
-impl ParseElementError{
-    pub fn new(kind: &str, message: &str) -> Self {
-        ParseElementError{kind: kind.to_string(), message: message.to_string()}
-    }
+// 定义错误创建宏
+macro_rules! define_error {
+    ($type:ident, $($variant:ident => ($kind:expr, $message:expr)),* $(,)?) => {
+        #[derive(Debug)]
+        pub struct $type {
+            kind: String,
+            message: String,
+        }
 
-    pub fn revision_id() -> Self {
-        Self::new("Revision", "Cannot get revision id from the element.")
-    }
+        impl $type {
+            pub fn new(kind: &str, message: &str) -> Self {
+                Self { kind: kind.to_string(), message: message.to_string() }
+            }
 
-    pub fn revision_ele() -> Self {
-        Self::new("Revision", "Element out of bound.")
-    }
+            $(
+                pub fn $variant() -> Self {
+                    Self::new($kind, $message)
+                }
+            )*
+        }
 
-    pub fn page_num() -> Self {
-        Self::new("Page", "Cannot get page number.")
-    }
-
-    pub fn site_id() -> Self {
-        Self::new("Site", "Cannot get site id from the element.")
-    }
-
-    pub fn site_title() -> Self {
-        Self::new("Site", "Cannot get site title from the element.")
-    }
-
-    pub fn site_ele() -> Self {
-        Self::new("Site", "Element out of bound.")
-    }
-
-    pub fn parser_id() -> Self {
-        Self::new("Parser", "Cannot get id from the element.")
-    }
-
-    pub fn parser_unix_name() -> Self {
-        Self::new("Parser", "Cannot get unix name from the element.")
-    }
-
-    pub fn user_date() -> Self {
-        Self::new("User", "Cannot get joined date from the element.")
-    }
-
-    pub fn user_ele() -> Self {
-        Self::new("User", "Element out of bound.")
-    }
-
-    pub fn user_avatar() -> Self {
-        Self::new("User", "Cannot get avatar url from the element.")
-    }
+        impl_error!($type);
+    };
 }
 
-impl Display for ParseElementError{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
+// 使用宏定义所有基础错误类型
+define_error!(ParseElementError,
+    revision_id => ("Revision", "Cannot get revision id from the element"),
+    revision_ele => ("Revision", "Element out of bound"),
+    page_num => ("Page", "Cannot get page number"),
+    page_ele => ("Mongodb", "Element out of bound"),
+    site_id => ("Site", "Cannot get site id from the element"),
+    site_title => ("Site", "Cannot get site title from the element"),
+    site_ele => ("Site", "Element out of bound"),
+    parser_id => ("Parser", "Cannot get id from the element"),
+    parser_unix_name => ("Parser", "Cannot get unix name from the element"),
+    user_date => ("User", "Cannot get joined date from the element"),
+    user_ele => ("User", "Element out of bound"),
+    user_avatar => ("User", "Cannot get avatar url from the element"),
+    mongo_ele => ("Mongodb", "Element out of bound"),
+);
 
-impl std::error::Error for ParseElementError{
-}
+define_error!(IdNotFound,
+    site => ("Site", "Failed to parse site id"),
+    page => ("Page", "Failed to parse page id"),
+);
 
-#[derive(Debug)]
-pub struct IdNotFound{
-    kind: String,
-    message: String,
-}
+define_error!(TargetNotExist,
+    site => ("Site", "Site not found"),
+    page => ("Page", "Page not found"),
+);
 
-impl Display for IdNotFound{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
+define_error!(WikidotRespondError,
+    try_again => ("body", "Body status is 'try_again'"),
+    empty => ("body", "Body is empty"),
+);
 
-impl std::error::Error for IdNotFound{
-}
-
-impl IdNotFound{
-    pub fn new(kind: &str, message: &str) -> Self {
-        IdNotFound{kind: kind.to_string(), message: message.to_string()}
-    }
-
-    pub fn site() -> Self{
-        Self::new("Site", "Failed to parse site id.")
-    }
-
-    pub fn page() -> Self{
-        Self::new("Page", "Failed to parse page id.")
+impl WikidotRespondError {
+    pub fn status(status: reqwest::StatusCode) -> Self {
+        Self::new("status", status.as_str())
     }
 }
 
 #[derive(Debug)]
-pub struct TargetNotExist{
-    kind: String,
-    message: String,
-}
-
-impl Display for TargetNotExist{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for TargetNotExist{
-}
-
-impl TargetNotExist{
-    pub fn new(kind: &str, message: &str) -> Self {
-        TargetNotExist{kind: kind.to_string(), message: message.to_string()}
-    }
-
-    pub fn site() -> Self{
-        Self::new("Site", "Site not found.")
-    }
-
-    pub fn page() -> Self{
-        Self::new("Page", "Page not found.")
-    }
-}
-
-#[derive(Debug)]
-pub struct WikidotRespondError{
-    kind: String,
-    message: String,
-}
-
-impl Display for WikidotRespondError{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-impl std::error::Error for WikidotRespondError{
-}
-
-#[derive(Debug)]
-pub enum AjaxClientError{
+pub enum AjaxClientError {
     ReqwestError(reqwest::Error),
     HeaderParseError(InvalidHeaderValue),
     WikidotRespondError(WikidotRespondError),
     ToStrError(ToStrError),
 }
 
-impl Display for AjaxClientError{
+impl Display for AjaxClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Self::ReqwestError(e) => write!(f, "HTTP request error: {}", e),
+            Self::HeaderParseError(e) => write!(f, "Header parse error: {}", e),
+            Self::WikidotRespondError(e) => write!(f, "Wikidot response error: {}", e),
+            Self::ToStrError(e) => write!(f, "String conversion error: {}", e),
+        }
     }
 }
 
-impl std::error::Error for AjaxClientError{
+impl std::error::Error for AjaxClientError {}
+
+// From implementations for AjaxClientError
+impl From<reqwest::Error> for AjaxClientError {
+    fn from(value: reqwest::Error) -> Self { Self::ReqwestError(value) }
 }
 
-impl WikidotRespondError{
-    pub fn new(kind: &str, message: &str) -> Self {
-        WikidotRespondError{kind: kind.to_string(), message: message.to_string()}
-    }
-
-    pub fn status(status: reqwest::StatusCode) -> Self{
-        Self::new("status", status.as_str())
-    }
-
-    pub fn try_again() -> Self {
-        Self::new("body", "Body status is 'try_again'.")
-    }
-
-    pub fn empty() -> Self {
-        Self::new("body", "Body is empty.")
-    }
+impl From<InvalidHeaderValue> for AjaxClientError {
+    fn from(value: InvalidHeaderValue) -> Self { Self::HeaderParseError(value) }
 }
 
-impl From<reqwest::Error> for AjaxClientError{
-    fn from(value: reqwest::Error) -> Self {
-        Self::ReqwestError(value)
-    }
+impl From<WikidotRespondError> for AjaxClientError {
+    fn from(value: WikidotRespondError) -> Self { Self::WikidotRespondError(value) }
 }
 
-impl From<InvalidHeaderValue> for AjaxClientError{
-    fn from(value: InvalidHeaderValue) -> Self {
-        Self::HeaderParseError(value)
-    }
-}
-
-impl From<WikidotRespondError> for AjaxClientError{
-    fn from(value: WikidotRespondError) -> Self {
-        Self::WikidotRespondError(value)
-    }
-}
-
-
-impl From<ToStrError> for AjaxClientError{
-    fn from(value: ToStrError) -> Self {
-        Self::ToStrError(value)
-    }
+impl From<ToStrError> for AjaxClientError {
+    fn from(value: ToStrError) -> Self { Self::ToStrError(value) }
 }
 
 #[derive(Debug)]
-pub enum WikidotError{
+pub enum WikidotError {
     ParseRegexError(regex::Error),
     ParseIntError(ParseIntError),
     ParseFloatError(ParseFloatError),
@@ -213,77 +128,65 @@ pub enum WikidotError{
     MongodbError(mongodb::error::Error),
 }
 
-impl Display for WikidotError{
+impl Display for WikidotError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
+        match self {
+            Self::ParseRegexError(e) => write!(f, "Regex parse error: {}", e),
+            Self::ParseIntError(e) => write!(f, "Integer parse error: {}", e),
+            Self::ParseFloatError(e) => write!(f, "Float parse error: {}", e),
+            Self::ParseElementError(e) => write!(f, "Element parse error: {}", e),
+            Self::ClientError(e) => write!(f, "Client error: {}", e),
+            Self::IdNotFound(e) => write!(f, "ID not found: {}", e),
+            Self::TargetNotExist(e) => write!(f, "Target not exist: {}", e),
+            Self::SerdeJsonError(e) => write!(f, "JSON parse error: {}", e),
+            Self::MongodbError(e) => write!(f, "MongoDB error: {}", e),
+        }
     }
 }
 
-impl std::error::Error for WikidotError{
+impl std::error::Error for WikidotError {}
+
+// From implementations for WikidotError
+impl From<reqwest::Error> for WikidotError {
+    fn from(value: reqwest::Error) -> Self { Self::ClientError(AjaxClientError::from(value)) }
 }
 
-impl From<reqwest::Error> for WikidotError{
-    fn from(value: reqwest::Error) -> Self {
-        Self::ClientError(AjaxClientError::from(value))
-    }
+impl From<ToStrError> for WikidotError {
+    fn from(value: ToStrError) -> Self { Self::ClientError(AjaxClientError::from(value)) }
 }
 
-impl From<ToStrError> for WikidotError{
-    fn from(value: ToStrError) -> Self {
-        Self::ClientError(AjaxClientError::from(value))
-    }
+impl From<AjaxClientError> for WikidotError {
+    fn from(value: AjaxClientError) -> Self { Self::ClientError(value) }
 }
 
-impl From<AjaxClientError> for WikidotError{
-    fn from(value: AjaxClientError) -> Self {
-        Self::ClientError(value)
-    }
+impl From<regex::Error> for WikidotError {
+    fn from(value: regex::Error) -> Self { Self::ParseRegexError(value) }
 }
 
-impl From<regex::Error> for WikidotError{
-    fn from(value: regex::Error) -> Self {
-        Self::ParseRegexError(value)
-    }
+impl From<ParseElementError> for WikidotError {
+    fn from(value: ParseElementError) -> Self { Self::ParseElementError(value) }
 }
 
-impl From<ParseElementError> for WikidotError{
-    fn from(value: ParseElementError) -> Self {
-        Self::ParseElementError(value)
-    }
+impl From<ParseIntError> for WikidotError {
+    fn from(value: ParseIntError) -> Self { Self::ParseIntError(value) }
 }
 
-impl From<ParseIntError> for WikidotError{
-    fn from(value: ParseIntError) -> Self {
-        Self::ParseIntError(value)
-    }
+impl From<ParseFloatError> for WikidotError {
+    fn from(value: ParseFloatError) -> Self { Self::ParseFloatError(value) }
 }
 
-impl From<ParseFloatError> for WikidotError{
-    fn from(value: ParseFloatError) -> Self {
-        Self::ParseFloatError(value)
-    }
+impl From<IdNotFound> for WikidotError {
+    fn from(value: IdNotFound) -> Self { Self::IdNotFound(value) }
 }
 
-impl From<IdNotFound> for WikidotError{
-    fn from(value: IdNotFound) -> Self {
-        Self::IdNotFound(value)
-    }
+impl From<TargetNotExist> for WikidotError {
+    fn from(value: TargetNotExist) -> Self { Self::TargetNotExist(value) }
 }
 
-impl From<TargetNotExist> for WikidotError{
-    fn from(value: TargetNotExist) -> Self {
-        Self::TargetNotExist(value)
-    }
+impl From<serde_json::Error> for WikidotError {
+    fn from(value: serde_json::Error) -> Self { Self::SerdeJsonError(value) }
 }
 
-impl From<serde_json::Error> for WikidotError{
-    fn from(value: serde_json::Error) -> Self {
-        Self::SerdeJsonError(value)
-    }
-}
-
-impl From<mongodb::error::Error> for WikidotError{
-    fn from(value: mongodb::error::Error) -> Self {
-        Self::MongodbError(value)
-    }
+impl From<mongodb::error::Error> for WikidotError {
+    fn from(value: mongodb::error::Error) -> Self { Self::MongodbError(value) }
 }

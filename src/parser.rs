@@ -68,10 +68,12 @@ pub fn printuser(element: ElementRef) -> Result<User, WikidotError>{
     }
 }
 
-fn user_add(user_id: i32){
-    unsafe {
-        if !USER_ADD.contains(&user_id) & !USER_NOW.contains(&user_id){
-            USER_ADD.push(user_id);
-        }
+fn user_add(user_id: i32) {
+    let add_vec = USER_ADD.lock().unwrap();
+    let now_vec = USER_NOW.lock().unwrap();
+    if !add_vec.contains(&user_id) & !now_vec.contains(&user_id) {
+        drop(add_vec);
+        drop(now_vec);
+        USER_ADD.lock().unwrap().push(user_id);
     }
 }

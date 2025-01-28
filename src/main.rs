@@ -1,9 +1,24 @@
-use std::{collections::HashMap, sync::Arc, thread::sleep, time::Duration};
+use std::{collections::HashMap, thread::sleep, time::Duration};
 use futures::{stream, StreamExt};
 use mongodb::bson::{doc, DateTime};
-use scraper::{ElementRef, Html, Selector};
+use scraper::{ElementRef, Html};
 use dotenv;
-use wikidot::{client::AjaxClient, error::WikidotError, mongo_page::{update_page, MongoPage}, mongo_user::{add_user, update_user, MongoUser, USER_ADD, USER_NOW}, page::PAGE_VEC, parser, selectors, site::Site};
+use wikidot::{client::AjaxClient, error::{ParseElementError, WikidotError}, mongo_page::{update_alt_titles, update_page, MongoPage}, mongo_user::{add_user, update_user, MongoUser, USER_ADD, USER_NOW}, page::PAGE_VEC, parser, selectors, site::Site};
+
+const ALT_TITLE_URLS: [&str; 12] = [
+    "https://backrooms-wiki-cn.wikidot.com/normal-levels-cn-i",
+    "https://backrooms-wiki-cn.wikidot.com/sub-layers",
+    "https://backrooms-wiki-cn.wikidot.com/enigmatic-levels",
+    "https://backrooms-wiki-cn.wikidot.com/objects",
+    "https://backrooms-wiki-cn.wikidot.com/phenomena",
+    "https://backrooms-wiki-cn.wikidot.com/normal-levels-cn-i",
+    "https://backrooms-wiki-cn.wikidot.com/normal-levels-cn-ii",
+    "https://backrooms-wiki-cn.wikidot.com/sub-layers-cn",
+    "https://backrooms-wiki-cn.wikidot.com/enigmatic-series-cn",
+    "https://backrooms-wiki-cn.wikidot.com/entities-cn",
+    "https://backrooms-wiki-cn.wikidot.com/objects-cn",
+    "https://backrooms-wiki-cn.wikidot.com/phenomena-cn",
+];
 
 macro_rules! collect_result {
     ($hash: expr, $results: expr, $iter: expr) => {
@@ -16,10 +31,14 @@ macro_rules! collect_result {
     };
 }
 
-async fn acquire_metadata(tr: ElementRef<'_>, site: Arc<Site>, page_col: Arc<mongodb::Collection<MongoPage>>) -> Result<(), WikidotError>{
+async fn acquire_metadata(
+    tr: ElementRef<'_>, 
+    site: Site,
+    page_col: mongodb::Collection<MongoPage>
+) -> Result<(), WikidotError> {
     let mut tds = tr.select(&selectors::TD);
-    let page_fullname = tds.next().unwrap().text().collect::<String>();
-    let user_name = tds.next().unwrap().text().collect::<String>();
+    let page_fullname = tds.next().ok_or(ParseElementError::page_ele())?.text().collect::<String>();
+    let user_name = tds.next().ok_or(ParseElementError::user_ele())?.text().collect::<String>();
     if user_name.is_empty() {return  Ok(())}
     let user_res = site.request(&[
         ("threadId", "15081869"),
@@ -47,97 +66,98 @@ async fn acquire_metadata(tr: ElementRef<'_>, site: Arc<Site>, page_col: Arc<mon
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
-    dotenv::from_filename(".env.local").unwrap();
-    let mongo = mongodb::Client::with_uri_str(dotenv::var("DB_LINK").unwrap())
+    dotenv::from_filename(".env.local")?;
+    let mongo = mongodb::Client::with_uri_str(dotenv::var("DB_LINK")?)
         .await?;
     let db = mongo.database("backrooms-cn");
-    let page_col: Arc<mongodb::Collection<MongoPage>> = Arc::new(db.collection("pages"));
-    let user_col: Arc<mongodb::Collection<MongoUser>> = Arc::new(db.collection("users"));
+    let page_col: mongodb::Collection<MongoPage> = db.collection("pages");
+    let user_col: mongodb::Collection<MongoUser> = db.collection("users");
+    let client = AjaxClient::from(&dotenv::var("WD_USERNAME")?,
+        &dotenv::var("WD_PASSWORD")?).await?;
     loop {
         let start = DateTime::now();
         println!("start: {:?}", start.timestamp_millis());
-        unsafe {
-            USER_ADD = Vec::new();
-            USER_NOW = Vec::new();
-            PAGE_VEC = Vec::new();
-        }
+
+        USER_ADD.lock()?.clear();
+        USER_NOW.lock()?.clear();
+        PAGE_VEC.lock()?.clear();
+
         for user_bson in user_col.distinct("id", doc! {}).await?{
-            unsafe {USER_NOW.push(user_bson.as_i32().unwrap());}
+            USER_NOW.lock()?.push(user_bson.as_i32().unwrap());
         }
-        let client = AjaxClient::from(&dotenv::var("WD_USERNAME").unwrap(),
-            &dotenv::var("WD_PASSWORD").unwrap()).await?;
         let site = client.get_site("backrooms-wiki-cn").await?;
 
         let pages = site.search(&[("category", "*")]).await?;
-        let mut page_iter = pages.clone().into_iter();
-
-        let mut tasks = Vec::new();
         
-        for page in pages{
-            let col_arc_clone = page_col.clone();
-            tasks.push(update_page(col_arc_clone, page));
-        }
-
-        let results = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
+        let results = stream::iter(
+            pages.iter()
+                .map(|page| update_page(page_col.clone(), page.clone()))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
 
         let mut page_hash: HashMap<_, _> = HashMap::new();
         let mut user_hash: HashMap<_, _> = HashMap::new();
 
-        for result in results{
-            let page = page_iter.next().unwrap();
+        for (i, result) in results.into_iter().enumerate() {
             if result.is_err() {
-                page_hash.insert(page.fullname, result.err().unwrap());
+                page_hash.insert(pages[i].fullname.clone(), result.err().unwrap());
             }
         }
 
-        let _ = page_col.update_many(doc! { "id": { "$nin": unsafe { PAGE_VEC.clone() } } }, doc! { "$set": {"status": false}}).await?;
+        let _ = page_col.update_many(doc! { "id": { "$nin": PAGE_VEC.lock()?.clone() } }, doc! { "$set": {"status": false}}).await?;
         
         let response = client.get("https://backrooms-wiki-cn.wikidot.com/attribution-metadata").await?.text().await?;
         let html = Html::parse_document(&response);
-        let table = html.select(&Selector::parse("table.wiki-content-table").unwrap()).next().unwrap();
-        let site_arc = Arc::new(site);
-        let mut tasks = Vec::new();
-        for tr in table.select(&selectors::TR).skip(1) {
-            let col_arc_clone = page_col.clone();
-            let site_clone = site_arc.clone();
-            tasks.push(acquire_metadata(tr, site_clone, col_arc_clone));
-        }
-
-        let _ = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
+        let table = html.select(&selectors::TABLE).next().unwrap();
+        let _ = stream::iter(
+            table.select(&selectors::TR)
+                .skip(1)
+                .map(|tr| acquire_metadata(tr, site.clone(), page_col.clone()))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
         
-        unsafe { println!("{:?}, {:?}, {:?}", PAGE_VEC, USER_NOW, USER_ADD) };
+        println!("{:?}, {:?}, {:?}", 
+            PAGE_VEC.lock()?, 
+            USER_NOW.lock()?, 
+            USER_ADD.lock()?
+        );
 
-        let mut update_users = Vec::new();
-        for user_bson in user_col.distinct("id", doc! {"account_type": {"$ne" : "deleted"}}).await?{
-            update_users.push(user_bson.as_i32().unwrap());
-        }
+        let update_users: Vec<i32> = user_col
+            .distinct("id", doc! {"account_type": {"$ne": "deleted"}}).await?
+            .into_iter()
+            .map(|bson| bson.as_i32().unwrap())
+            .collect();
 
-        let mut tasks = Vec::new();
-        for user_id in update_users.clone() {
-            let col_arc_clone = user_col.clone();
-            tasks.push(update_user(col_arc_clone, user_id));
-        }
+        let results = stream::iter(
+            update_users.iter()
+                .map(|&user_id| update_user(user_col.clone(), user_id))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
+        collect_result!(user_hash, results, update_users.iter().copied());
 
-        let results = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
-        collect_result!(user_hash, results, update_users.clone().into_iter());
-
-        let mut tasks = Vec::new();
-        unsafe{
-            for user_id in USER_ADD.clone() {
-                let col_arc_clone = user_col.clone();
-                tasks.push(add_user(col_arc_clone, user_id));
-            }
-        }
-
-        let results = stream::iter(tasks).buffered(6)
-            .collect::<Vec<_>>().await;
-        collect_result!(user_hash, results, unsafe { USER_ADD.clone().into_iter() });
+        let results = stream::iter(
+            USER_ADD.lock()?.to_vec()
+                .iter()
+                .map(|user_id| add_user(user_col.clone(), *user_id))
+        )
+        .buffered(6)
+        .collect::<Vec<_>>()
+        .await;
+        collect_result!(user_hash, results, USER_ADD.lock()?.to_vec().iter().copied());
 
         println!("failed pages: {:?}", page_hash);
         println!("failed users: {:?}", user_hash);
+
+        for url in ALT_TITLE_URLS{
+            update_alt_titles(client.clone(), url, page_col.clone()).await?;
+        }
+
         let end = DateTime::now();
         println!("end: {}, duration: {}", end.timestamp_millis(), end.saturating_duration_since(start).as_secs());
 

@@ -1,11 +1,12 @@
-use std::sync::Arc;
 use mongodb::bson::{doc, DateTime};
 use serde::{Deserialize, Serialize};
+use once_cell::sync::Lazy;
+use std::sync::Mutex;
 
-use crate::{client::AjaxClient, error::WikidotError};
+use crate::{client::AjaxClient, error::{ParseElementError, WikidotError}};
 
-pub static mut USER_NOW: Vec<i32> = Vec::new();
-pub static mut USER_ADD: Vec<i32> = Vec::new();
+pub static USER_ADD: Lazy<Mutex<Vec<i32>>> = Lazy::new(|| Mutex::new(Vec::new()));
+pub static USER_NOW: Lazy<Mutex<Vec<i32>>> = Lazy::new(|| Mutex::new(Vec::new()));
 
 #[derive(Deserialize, Serialize)]
 pub struct MongoUser{
@@ -29,19 +30,22 @@ struct MongoAvatar{
     timestamp: DateTime,
 }
 
-pub async fn update_user(collection: Arc<mongodb::Collection<MongoUser>>, user_id: i32) -> Result<(), WikidotError>{
+pub async fn update_user(collection: mongodb::Collection<MongoUser>, user_id: i32) -> Result<(), WikidotError>{
     let user = AjaxClient::new().user(user_id).await?;
     println!("{:?}", user.title);
-    let mut user_history = collection.find_one(doc! {"id": user_id}).await?.unwrap();
-    if user_history.title.last().unwrap() != &user.title{
+    let mut user_history = match collection.find_one(doc! {"id": user_id}).await? {
+        Some(history) => history,
+        None => return Ok(()),
+    };
+    if user_history.title.last().ok_or(ParseElementError::mongo_ele())? != &user.title || !user.title.is_empty(){
         user_history.title.push(user.title);
     }
 
-    if user_history.avatar.last().unwrap().image != user.avatar{
+    if user_history.avatar.last().ok_or(ParseElementError::mongo_ele())?.image != user.avatar{
         user_history.avatar.push(MongoAvatar{image: user.avatar, timestamp: DateTime::now()});
     }
 
-    if user_history.karma.last().unwrap().level != user.karma{
+    if user_history.karma.last().ok_or(ParseElementError::mongo_ele())?.level < user.karma{
         user_history.karma.push(MongoKarma{level: user.karma, timestamp: DateTime::now()});
     }
 
@@ -55,7 +59,7 @@ pub async fn update_user(collection: Arc<mongodb::Collection<MongoUser>>, user_i
     Ok(())
 }
 
-pub async fn add_user(collection: Arc<mongodb::Collection<MongoUser>>, user_id: i32) -> Result<(), WikidotError>{
+pub async fn add_user(collection: mongodb::Collection<MongoUser>, user_id: i32) -> Result<(), WikidotError>{
     let user = AjaxClient::new().user(user_id).await?;
     println!("{:?}", user.title);
     let _ = collection.insert_one(MongoUser{
