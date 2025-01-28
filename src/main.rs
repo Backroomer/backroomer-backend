@@ -1,9 +1,24 @@
 use std::{collections::HashMap, thread::sleep, time::Duration};
 use futures::{stream, StreamExt};
 use mongodb::bson::{doc, DateTime};
-use scraper::{ElementRef, Html, Selector};
+use scraper::{ElementRef, Html};
 use dotenv;
-use wikidot::{client::AjaxClient, error::WikidotError, mongo_page::{update_page, MongoPage}, mongo_user::{add_user, update_user, MongoUser, USER_ADD, USER_NOW}, page::PAGE_VEC, parser, selectors, site::Site};
+use wikidot::{client::AjaxClient, error::{ParseElementError, WikidotError}, mongo_page::{update_alt_titles, update_page, MongoPage}, mongo_user::{add_user, update_user, MongoUser, USER_ADD, USER_NOW}, page::PAGE_VEC, parser, selectors, site::Site};
+
+const ALT_TITLE_URLS: [&str; 12] = [
+    "https://backrooms-wiki-cn.wikidot.com/normal-levels-cn-i",
+    "https://backrooms-wiki-cn.wikidot.com/sub-layers",
+    "https://backrooms-wiki-cn.wikidot.com/enigmatic-levels",
+    "https://backrooms-wiki-cn.wikidot.com/objects",
+    "https://backrooms-wiki-cn.wikidot.com/phenomena",
+    "https://backrooms-wiki-cn.wikidot.com/normal-levels-cn-i",
+    "https://backrooms-wiki-cn.wikidot.com/normal-levels-cn-ii",
+    "https://backrooms-wiki-cn.wikidot.com/sub-layers-cn",
+    "https://backrooms-wiki-cn.wikidot.com/enigmatic-series-cn",
+    "https://backrooms-wiki-cn.wikidot.com/entities-cn",
+    "https://backrooms-wiki-cn.wikidot.com/objects-cn",
+    "https://backrooms-wiki-cn.wikidot.com/phenomena-cn",
+];
 
 macro_rules! collect_result {
     ($hash: expr, $results: expr, $iter: expr) => {
@@ -22,8 +37,8 @@ async fn acquire_metadata(
     page_col: mongodb::Collection<MongoPage>
 ) -> Result<(), WikidotError> {
     let mut tds = tr.select(&selectors::TD);
-    let page_fullname = tds.next().unwrap().text().collect::<String>();
-    let user_name = tds.next().unwrap().text().collect::<String>();
+    let page_fullname = tds.next().ok_or(ParseElementError::page_ele())?.text().collect::<String>();
+    let user_name = tds.next().ok_or(ParseElementError::user_ele())?.text().collect::<String>();
     if user_name.is_empty() {return  Ok(())}
     let user_res = site.request(&[
         ("threadId", "15081869"),
@@ -51,12 +66,14 @@ async fn acquire_metadata(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>>{
-    dotenv::from_filename(".env.local").unwrap();
-    let mongo = mongodb::Client::with_uri_str(dotenv::var("DB_LINK").unwrap())
+    dotenv::from_filename(".env.local")?;
+    let mongo = mongodb::Client::with_uri_str(dotenv::var("DB_LINK")?)
         .await?;
     let db = mongo.database("backrooms-cn");
     let page_col: mongodb::Collection<MongoPage> = db.collection("pages");
     let user_col: mongodb::Collection<MongoUser> = db.collection("users");
+    let client = AjaxClient::from(&dotenv::var("WD_USERNAME")?,
+        &dotenv::var("WD_PASSWORD")?).await?;
     loop {
         let start = DateTime::now();
         println!("start: {:?}", start.timestamp_millis());
@@ -65,11 +82,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         USER_NOW.lock()?.clear();
         PAGE_VEC.lock()?.clear();
 
+        for url in ALT_TITLE_URLS{
+            update_alt_titles(client.clone(), url, page_col.clone()).await?;
+        }
+        
         for user_bson in user_col.distinct("id", doc! {}).await?{
             USER_NOW.lock()?.push(user_bson.as_i32().unwrap());
         }
-        let client = AjaxClient::from(&dotenv::var("WD_USERNAME").unwrap(),
-            &dotenv::var("WD_PASSWORD").unwrap()).await?;
         let site = client.get_site("backrooms-wiki-cn").await?;
 
         let pages = site.search(&[("category", "*")]).await?;
@@ -95,7 +114,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         
         let response = client.get("https://backrooms-wiki-cn.wikidot.com/attribution-metadata").await?.text().await?;
         let html = Html::parse_document(&response);
-        let table = html.select(&Selector::parse("table.wiki-content-table").unwrap()).next().unwrap();
+        let table = html.select(&selectors::TABLE).next().unwrap();
         let _ = stream::iter(
             table.select(&selectors::TR)
                 .skip(1)

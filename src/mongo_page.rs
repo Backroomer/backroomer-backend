@@ -1,7 +1,9 @@
 use std::collections::HashMap;
+use futures::{stream, StreamExt};
 use mongodb::bson::{doc, DateTime};
+use scraper::{ElementRef, Html};
 use serde::{Deserialize, Serialize};
-use crate::{error::WikidotError, page::Page, page_history::Revision};
+use crate::{client::AjaxClient, error::{ParseElementError, WikidotError}, page::Page, page_history::Revision, selectors};
 
 #[derive(Deserialize, Serialize)]
 pub struct MongoRateHistory{
@@ -33,6 +35,7 @@ pub struct MongoPage{
     history: Vec<MongoRevision>,
     comments_count: i16,
     status: bool,
+    alternative: String,
 }
 
 fn process_revisions(revisions: Vec<Revision>) -> Vec<MongoRevision>{
@@ -73,14 +76,14 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
         }
 
         let mut old_rates = old_page.rate_history;
-        let last = old_rates.pop().unwrap();
+        let last = old_rates.pop().ok_or(ParseElementError::mongo_ele())?;
 
         let mut diff: HashMap<String, i8> = HashMap::new();
         for vote in page.acquire_votes().await?{
             let user_id = vote.user.id.unwrap();
             if let Some(matched_vote) = last.votes.get(&user_id.to_string()){
                 if matched_vote != &vote.rate{
-                    diff.insert(vote.user.id.unwrap().to_string(), *matched_vote);
+                    diff.insert(user_id.to_string(), *matched_vote);
                 }
             }
             else{
@@ -122,9 +125,33 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
             history: process_revisions(revisions),
             comments_count: page.comments_count,
             status: true,
+            alternative: String::new(),
         };
         collection.insert_one(&mongo_page).await?;
     }
 
+    Ok(())
+}
+
+pub async fn update_alt_titles(client: AjaxClient, url: &str, db: mongodb::Collection<MongoPage>) -> Result<(), WikidotError>{
+    let text = client.get(url).await?.text().await?;
+    let html = Html::parse_fragment(&text);
+
+    let _ = stream::iter(
+        html.select(&selectors::ALTER)
+            .map(|ele| process_alt_title_ele(ele, db.clone()))
+    )
+    .buffered(6)
+    .collect::<Vec<_>>()
+    .await;
+
+    Ok(())
+}
+
+async fn process_alt_title_ele<'a>(ele: ElementRef<'a>, db: mongodb::Collection<MongoPage>) -> Result<(), WikidotError>{
+    let fullname = ele.select(&selectors::A).next().unwrap().attr("href").unwrap();
+    let alt_title = ele.text().collect::<String>();
+
+    db.update_one(doc! {"fullname": &fullname[1..], "status": true}, doc! {"$set": {"alternative": &alt_title.trim()}}).await?;
     Ok(())
 }
