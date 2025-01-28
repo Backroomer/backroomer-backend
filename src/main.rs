@@ -82,10 +82,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
         USER_NOW.lock()?.clear();
         PAGE_VEC.lock()?.clear();
 
-        for url in ALT_TITLE_URLS{
-            update_alt_titles(client.clone(), url, page_col.clone()).await?;
-        }
-        
         for user_bson in user_col.distinct("id", doc! {}).await?{
             USER_NOW.lock()?.push(user_bson.as_i32().unwrap());
         }
@@ -157,6 +153,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
 
         println!("failed pages: {:?}", page_hash);
         println!("failed users: {:?}", user_hash);
+
+        for url in ALT_TITLE_URLS{
+            update_alt_titles(client.clone(), url, page_col.clone()).await?;
+        }
+
         let end = DateTime::now();
         println!("end: {}, duration: {}", end.timestamp_millis(), end.saturating_duration_since(start).as_secs());
 
