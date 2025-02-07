@@ -91,8 +91,14 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
             }
             new_rates.insert(user_id.to_string(), vote.rate);
         }
-        old_rates.push(MongoRateHistory{votes: diff, ..last});
-        old_rates.push(MongoRateHistory{timestamp: DateTime::now(), votes: new_rates, up, down});
+
+        if diff.is_empty(){
+            old_rates.push(last);
+        }
+        else {
+            old_rates.push(MongoRateHistory{votes: diff, ..last});
+            old_rates.push(MongoRateHistory{timestamp: DateTime::now(), votes: new_rates, up, down});
+        }
         
         mongo_page = MongoPage{
             fullname: page.fullname,

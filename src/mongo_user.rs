@@ -37,7 +37,7 @@ pub async fn update_user(collection: mongodb::Collection<MongoUser>, user_id: i3
         Some(history) => history,
         None => return Ok(()),
     };
-    if user_history.title.last().ok_or(ParseElementError::mongo_ele())? != &user.title || !user.title.is_empty(){
+    if user_history.title.last().ok_or(ParseElementError::mongo_ele())? != &user.title && !user.title.is_empty(){
         user_history.title.push(user.title);
     }
 
