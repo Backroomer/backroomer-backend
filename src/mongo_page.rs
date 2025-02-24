@@ -102,7 +102,6 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
         
         mongo_page = MongoPage{
             fullname: page.fullname,
-            author: vec![page.created_by.id.unwrap_or(old_page.history.last().unwrap().created_by)],
             title: page.title.unwrap_or(String::new()),
             tags: page.tags,
             rate_history: old_rates,
