@@ -77,6 +77,7 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
 
         let mut old_rates = old_page.rate_history;
         let last = old_rates.pop().ok_or(ParseElementError::mongo_ele())?;
+        let mut last_votes = last.votes.clone();
 
         let mut diff: HashMap<String, i8> = HashMap::new();
         for vote in page.acquire_votes().await?{
@@ -89,8 +90,11 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
             else{
                 diff.insert(user_id.to_string(), 0);
             }
+            last_votes.remove(&user_id.to_string());
             new_rates.insert(user_id.to_string(), vote.rate);
         }
+
+        diff.extend(last_votes);
 
         if diff.is_empty(){
             old_rates.push(last);
