@@ -6,7 +6,7 @@ use dotenv;
 use wikidot::{client::AjaxClient, error::{ParseElementError, WikidotError}, mongo_page::{update_alt_titles, update_page, MongoPage}, mongo_user::{add_user, update_user, MongoUser, USER_ADD, USER_NOW}, page::PAGE_VEC, parser, selectors, site::Site};
 
 const ALT_TITLE_URLS: [&str; 12] = [
-    "https://backrooms-wiki-cn.wikidot.com/normal-levels-cn-i",
+    "https://backrooms-wiki-cn.wikidot.com/normal-levels-i",
     "https://backrooms-wiki-cn.wikidot.com/sub-layers",
     "https://backrooms-wiki-cn.wikidot.com/enigmatic-levels",
     "https://backrooms-wiki-cn.wikidot.com/objects",
@@ -74,6 +74,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
     let user_col: mongodb::Collection<MongoUser> = db.collection("users");
     let client = AjaxClient::from(&dotenv::var("WD_USERNAME")?,
         &dotenv::var("WD_PASSWORD")?).await?;
+    let semaphore = dotenv::var("SEMAPHORE")?.parse::<usize>()?;
     loop {
         let start = DateTime::now();
         println!("start: {:?}", start.timestamp_millis());
@@ -93,7 +94,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             pages.iter()
                 .map(|page| update_page(page_col.clone(), page.clone()))
         )
-        .buffered(6)
+        .buffered(semaphore)
         .collect::<Vec<_>>()
         .await;
 
@@ -116,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 .skip(1)
                 .map(|tr| acquire_metadata(tr, site.clone(), page_col.clone()))
         )
-        .buffered(6)
+        .buffered(semaphore)
         .collect::<Vec<_>>()
         .await;
         
@@ -136,7 +137,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
             update_users.iter()
                 .map(|&user_id| update_user(user_col.clone(), user_id))
         )
-        .buffered(6)
+        .buffered(semaphore)
         .collect::<Vec<_>>()
         .await;
         collect_result!(user_hash, results, update_users.iter().copied());
@@ -146,7 +147,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>>{
                 .iter()
                 .map(|user_id| add_user(user_col.clone(), *user_id))
         )
-        .buffered(6)
+        .buffered(semaphore)
         .collect::<Vec<_>>()
         .await;
         collect_result!(user_hash, results, USER_ADD.lock()?.to_vec().iter().copied());

@@ -167,11 +167,11 @@ impl Site{
 
 impl AjaxClient {
     pub async fn get_site(&self, name: &str) -> Result<Site, WikidotError>{
-        let _response = self.get(&format!("http://{name}.wikidot.com")).await?;
+        let _response = self.get(&format!("https://{name}.wikidot.com")).await?;
         let (_response, ssl_supported) = match _response.status(){
             StatusCode::NOT_FOUND => return Err(TargetNotExist::site())?,
-            StatusCode::MOVED_PERMANENTLY => (self.get(&format!("https://{name}.wikidot.com")).await?, true),
-            _ => (_response, false)
+            StatusCode::MOVED_PERMANENTLY => (self.get(&format!("http://{name}.wikidot.com")).await?, false),
+            _ => (_response, true)
         };
         let _text = _response.text().await?;
 
