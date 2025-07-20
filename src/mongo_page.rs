@@ -39,7 +39,7 @@ pub struct MongoPage{
 }
 
 fn process_revisions(revisions: Vec<Revision>) -> Vec<MongoRevision>{
-    let mut rev = Vec::new();
+    let mut rev = Vec::with_capacity(revisions.len());
     for revision in revisions{
         rev.push(MongoRevision{
             index: revision.index,
@@ -81,17 +81,17 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
 
         let mut diff: HashMap<String, i8> = HashMap::new();
         for vote in page.acquire_votes().await?{
-            let user_id = vote.user.id.unwrap();
-            if let Some(matched_vote) = last.votes.get(&user_id.to_string()){
+            let user_id = vote.user.id.unwrap().to_string();
+            if let Some(matched_vote) = last_votes.get(&user_id){
                 if matched_vote != &vote.rate{
-                    diff.insert(user_id.to_string(), *matched_vote);
+                    diff.insert(user_id.clone(), *matched_vote);
                 }
             }
             else{
-                diff.insert(user_id.to_string(), 0);
+                diff.insert(user_id.clone(), 0);
             }
-            last_votes.remove(&user_id.to_string());
-            new_rates.insert(user_id.to_string(), vote.rate);
+            last_votes.remove(&user_id);
+            new_rates.insert(user_id, vote.rate);
         }
 
         diff.extend(last_votes);
@@ -106,7 +106,7 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
         
         mongo_page = MongoPage{
             fullname: page.fullname,
-            title: page.title.unwrap_or(String::new()),
+            title: page.title.unwrap_or_default(),
             tags: page.tags,
             rate_history: old_rates,
             comments_count: page.comments_count,
@@ -127,7 +127,7 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
             id: page.id.unwrap(),
             author: vec![page.created_by.id.unwrap_or(revisions.last().unwrap().created_by.id.unwrap())],
             fullname: page.fullname,
-            title: page.title.unwrap_or(String::new()),
+            title: page.title.unwrap_or_default(),
             source,
             tags: page.tags,
             rate_history: vec![MongoRateHistory{timestamp: DateTime::now(), votes: new_rates, up, down}],
