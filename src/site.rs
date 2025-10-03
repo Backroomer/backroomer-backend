@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use std::{iter::zip, sync::Arc};
 use regex::Regex;
 use reqwest::StatusCode;
 use scraper::{selectable::Selectable, Html};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use futures::{stream, StreamExt, TryStreamExt};
-use crate::{client::{AjaxClient, AjaxResponse}, error::{AjaxClientError, ParseElementError, TargetNotExist, WikidotError}, page::Page, parser, selectors};
+use crate::{client::{AjaxClient, AjaxResponse}, error::{AjaxClientError, ParseElementError, TargetNotExist, WikidotError}, page::Page, parser, selectors, user::User};
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct Site{
@@ -14,6 +14,12 @@ pub struct Site{
     pub title: String,
     pub unix_name: String,
     pub ssl_supported: bool,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+pub struct Application{
+    pub user: User,
+    pub text: String
 }
 
 impl Site{
@@ -163,6 +169,35 @@ impl Site{
 
         Ok(pages_vec)
     }
+
+    pub async fn get_application(&self) -> Result<Vec<Application>, WikidotError>{
+        let body = self.request(&[("moduleName", "managesite/ManageSiteMembersApplicationsModule")]).await?.body;
+
+        if body.contains("WIKIDOT.page.listeners.loginClick(event)"){
+            return Err(ParseElementError::application_permission())?
+        }
+
+        let html = Html::parse_fragment(&body);
+        let mut applications = Vec::new();
+
+        let user_eles = html.select(&selectors::APP).collect::<Vec<_>>();
+        let text_eles = html.select(&selectors::TA).collect::<Vec<_>>();
+
+        if user_eles.len() != text_eles.len(){
+            return Err(ParseElementError::application_len())?
+        }
+
+        for (user_ele, text_ele) in zip(user_eles, text_eles){
+            let user = parser::printuser(user_ele)?;
+            let text = text_ele.select(&selectors::TD)
+                .nth(1).ok_or(ParseElementError::application_ele())?
+                .text().collect::<String>()
+                .trim().to_string();
+            applications.push(Application{user, text});
+        }
+        Ok(applications)
+    }
+
 }
 
 impl AjaxClient {

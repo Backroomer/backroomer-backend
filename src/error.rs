@@ -54,6 +54,9 @@ define_error!(ParseElementError,
     user_ele => ("User", "Element out of bound"),
     user_avatar => ("User", "Cannot get avatar url from the element"),
     mongo_ele => ("Mongodb", "Element out of bound"),
+    application_len => ("Application", "Length of user_elements and text_wrapper_elements are different"),
+    application_permission => ("Application", "You are not allowed to access this page"),
+    application_ele => ("Application", "Element out of bound"),
 );
 
 define_error!(IdNotFound,

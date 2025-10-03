@@ -29,4 +29,6 @@ build_selectors!(
     (KEY, "span.name"),
     (VALUE, "span.value"),
     (TABLE, "table.wiki-content-table"),
+    (APP, "h3 span.printuser"),
+    (TA, "table"),
 );
