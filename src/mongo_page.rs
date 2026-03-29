@@ -5,10 +5,16 @@ use scraper::{ElementRef, Html};
 use serde::{Deserialize, Serialize};
 use crate::{client::AjaxClient, error::{ParseElementError, WikidotError}, page::Page, page_history::Revision, selectors};
 
-#[derive(Deserialize, Serialize)]
+#[derive(Deserialize, Serialize, Clone)]
+pub struct MongoRate{
+    user_id: i32,
+    vote: i8,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
 pub struct MongoRateHistory{
     timestamp: DateTime,
-    votes: HashMap<String, i8>,
+    votes: Vec<MongoRate>,
     up: i16,
     down: i16,
 }
@@ -55,14 +61,14 @@ fn process_revisions(revisions: Vec<Revision>) -> Vec<MongoRevision>{
 
 pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: Page) -> Result<(), WikidotError>{
     println!("{}", page.fullname);
-    let mut new_rates: HashMap<String, i8> = HashMap::new();
+    let mut new_rates: Vec<MongoRate> = Vec::new();
     let mongo_page;
     let up: i16 = (page.votes_count + page.rating as i16) / 2;
     let down: i16 = (page.votes_count - page.rating as i16) / 2;
-    let filter = if let Some(user_id) = page.created_by.id {
+    let filter = if let Some(page_id) = page.id {
         doc! {
             "$expr": {"$eq": [{"$arrayElemAt": ["$history.created_at", -1]}, page.created_at]},
-            "author": user_id,
+            "id": page_id,
         }
     }
     else {
@@ -77,31 +83,48 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
 
         let mut old_rates = old_page.rate_history;
         let last = old_rates.pop().ok_or(ParseElementError::mongo_ele())?;
-        let mut last_votes = last.votes.clone();
+        let mut last_votes: HashMap<i32, i8> = last
+            .votes
+            .iter()
+            .map(|r| (r.user_id, r.vote))
+            .collect();
 
-        let mut diff: HashMap<String, i8> = HashMap::new();
-        for vote in page.acquire_votes().await?{
-            let user_id = vote.user.id.unwrap().to_string();
-            if let Some(matched_vote) = last_votes.get(&user_id){
-                if matched_vote != &vote.rate{
-                    diff.insert(user_id.clone(), *matched_vote);
+        let mut diff: HashMap<i32, i8> = HashMap::new();
+        for vote in page.acquire_votes().await? {
+            let user_id = vote.user.id.unwrap();
+            if let Some(&matched_vote) = last_votes.get(&user_id) {
+                if matched_vote != vote.rate {
+                    diff.insert(user_id, matched_vote);
                 }
-            }
-            else{
-                diff.insert(user_id.clone(), 0);
+            } else {
+                diff.insert(user_id, 0);
             }
             last_votes.remove(&user_id);
-            new_rates.insert(user_id, vote.rate);
+            new_rates.push(MongoRate {
+                user_id,
+                vote: vote.rate,
+            });
         }
 
         diff.extend(last_votes);
 
-        if diff.is_empty(){
+        if diff.is_empty() {
             old_rates.push(last);
-        }
-        else {
-            old_rates.push(MongoRateHistory{votes: diff, ..last});
-            old_rates.push(MongoRateHistory{timestamp: DateTime::now(), votes: new_rates, up, down});
+        } else {
+            let diff_votes: Vec<MongoRate> = diff
+                .into_iter()
+                .map(|(user_id, vote)| MongoRate { user_id, vote })
+                .collect();
+            old_rates.push(MongoRateHistory {
+                votes: diff_votes,
+                ..last
+            });
+            old_rates.push(MongoRateHistory {
+                timestamp: DateTime::now(),
+                votes: new_rates,
+                up,
+                down,
+            });
         }
         
         mongo_page = MongoPage{
@@ -117,8 +140,11 @@ pub async fn update_page(collection: mongodb::Collection<MongoPage>, mut page: P
     }
     else {
         page.acquire_id().await?;
-        for vote in page.acquire_votes().await?{
-            new_rates.insert(vote.user.id.unwrap().to_string(), vote.rate);
+        for vote in page.acquire_votes().await? {
+            new_rates.push(MongoRate {
+                user_id: vote.user.id.unwrap(),
+                vote: vote.rate,
+            });
         }
         let revisions = page.acquire_revisions(&["all"]).await?;
         let source = page.acquire_page_source().await?;
